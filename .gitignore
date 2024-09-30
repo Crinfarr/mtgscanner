@@ -125,3 +125,4 @@ dmypy.json
 bulkdata_full.json
 comps/*
 !comps
+carddata.tsv

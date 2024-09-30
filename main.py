@@ -8,14 +8,15 @@ def hamdist(hash1, hash2):
     if len(hash1) != len(hash2):
         raise ValueError("Cannot compare hashes of different length")
     return sum(c1 != c2 for c1, c2 in zip(hash1, hash2))
-hashes = {}
-lookup = {}
-# hasher = cv.img_hash.BlockMeanHash.create()#BEST SO FAR
+# hashes are formatted as tuples of (name (string), hash (np.ndarr<uint8>))
+hashes = []
+with open('carddata.tsv', 'r') as f:
+    for lnum, line in enumerate(f):
+        if lnum == 0:
+            continue
+        name, b64hash = line.split('\t')
+        hashes.append((name, np.array([np.frombuffer(base64.b64decode(b64hash[2:-1]), dtype=np.uint8)])))
 hasher = cv.img_hash.MarrHildrethHash.create()
-for file in os.listdir('comps'):
-    img = cv.imread(f'comps/{file}')
-    ihash = hasher.compute(img)
-    hashes[file] = ihash
 
 cam = cv.VideoCapture(0)
 def Nul(x):
@@ -55,11 +56,12 @@ while True:
         # cv.imshow(f'debug{idx}', boxed)
         cv.rectangle(clone, (x, y), (x+w, y+h), (0, 0, 255), 2)
         diffs = {}
-        for name, hashval in hashes.items():
+        for name, hashval in hashes:
             diffs[name] = hasher.compare(hashed, hashval)
         minkey = min(diffs, key=diffs.get)
         print(minkey)
         cv.putText(clone, minkey, (x, y-15), 0, 1.0, (0, 0, 255))
+        #TODO buffer 100 frames, display most common (error correction)
         # for imgname in hashes.keys():
             # print(f'debug{idx}:\t\t{imgname} similarity:\t\t{hasher.compare(hashed, hashes[imgname])}')
         # print(f'debug{idx}:{cv.img_hash.colorMomentHash(frame[y:y+h, x:x+w])}')
