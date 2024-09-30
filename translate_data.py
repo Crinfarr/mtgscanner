@@ -15,6 +15,7 @@ with open('bulkdata_full.json', 'rb') as f:
     print(f'total lines: {total_lines}')
 ofile = open('carddata.tsv', 'w', encoding='utf-8')
 ofile.seek(0)
+efile = open('retry.txt', 'w')
 ofile.write('name\thash\n')
 data = open('bulkdata_full.json', 'r', encoding='utf-8')
 oarr = []
@@ -45,7 +46,12 @@ for num, line in enumerate(data):
     areq = request.urlopen(obj['image_uris']['png'])
     print(f'[{areq.status}]'.rjust(8), end="")
     img = cv2.imdecode(np.asarray(bytearray(areq.read()), dtype=np.uint8), -1)
-    hashed = cv2.img_hash.marrHildrethHash(img)
+    try:
+        hashed = cv2.img_hash.marrHildrethHash(img)
+    except:
+        efile.write(f'{obj['name'] - {obj['set']}:{obj['collector_number']}({obj['lang']})}\n')
+        time.sleep(0.1)
+        continue
     ofile.write(f'{obj['name']} - {obj['set']}:{obj['collector_number']}({obj['lang']})\t{b64.b64encode(hashed)}\n')
     time.sleep(0.1)
     # oarr.append((f'{obj['name']} - {obj['set']}:{obj['collector_number']}({obj['lang']})', b64.b64encode(hashed)))
@@ -53,3 +59,4 @@ for num, line in enumerate(data):
     # https://docs.opencv.org/4.x/d4/d93/group__img__hash.html
     # use same hash algorithm as main
 ofile.close()
+efile.close()
