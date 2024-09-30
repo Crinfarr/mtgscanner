@@ -36,7 +36,13 @@ for num, line in enumerate(data):
             areq = request.urlopen(face['image_uris']['png'])
             print(f'  [{areq.status}]', end="")
             img = cv2.imdecode(np.asarray(bytearray(areq.read()), dtype=np.uint8), -1)
-            hashed = cv2.img_hash.marrHildrethHash(img)
+            try:
+                hashed = cv2.img_hash.marrHildrethHash(img)
+            except:
+                print(img)
+                efile.write(f'{obj['name']} - {obj['set']}:{obj['collector_number']}({obj['lang']})\n')
+                time.sleep(0.1)
+                continue
             ofile.write(f'{obj['name']} - {obj['set']}:{obj['collector_number']}({obj['lang']})\t{b64.b64encode(hashed)}\n')
             time.sleep(0.1)
             # oarr.append((f'{obj['name']} - {obj['set']}:{obj['collector_number']}({obj['lang']})', b64.b64encode(hashed)))
@@ -49,7 +55,8 @@ for num, line in enumerate(data):
     try:
         hashed = cv2.img_hash.marrHildrethHash(img)
     except:
-        efile.write(f'{obj['name'] - {obj['set']}:{obj['collector_number']}({obj['lang']})}\n')
+        print(img)
+        efile.write(f'{obj['name']} - {obj['set']}:{obj['collector_number']}({obj['lang']})\n')
         time.sleep(0.1)
         continue
     ofile.write(f'{obj['name']} - {obj['set']}:{obj['collector_number']}({obj['lang']})\t{b64.b64encode(hashed)}\n')
