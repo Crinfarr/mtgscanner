@@ -126,3 +126,7 @@ bulkdata_full.json
 comps/*
 !comps
 carddata.tsv
+
+# Added by cargo
+
+/target
