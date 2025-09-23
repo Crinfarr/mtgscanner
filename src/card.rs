@@ -63,6 +63,7 @@ pub struct Card {
     pub flavor_text: Option<String>,
     pub frame_effects: Option<Vec<CardFrameEffect>>,
     //TODO FRAMES +
+    //https://scryfall.com/docs/api/cards
 }
 #[derive(Deserialize)]
 #[allow(unused)]
