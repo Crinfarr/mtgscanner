@@ -1,6 +1,7 @@
 use std::f32::consts::PI;
 
 use serde::{Deserialize, de::Unexpected};
+use serde_with::chrono::{self, Date, DateTime, NaiveDate, TimeZone};
 
 use crate::card;
 
@@ -8,7 +9,7 @@ use crate::card;
 #[allow(unused)]
 pub struct Card {
     //core fields
-    pub arena_id: Option<String>,
+    pub arena_id: Option<u32>,
     pub id: String,
     pub lang: CardLang,
     pub mtgo_id: Option<u32>,
@@ -27,7 +28,7 @@ pub struct Card {
     //gameplay fields
     pub all_parts: Option<Vec<RelatedObject>>,
     pub card_faces: Option<Vec<CardFace>>,
-    pub cmc: f64,
+    pub cmc: Option<f64>,
     pub color_identity: Vec<CardColor>,
     pub color_indicator: Option<Vec<CardColor>>,
     pub colors: Option<Vec<CardColor>>,
@@ -44,17 +45,17 @@ pub struct Card {
     pub oracle_text: Option<String>,
     pub penny_rank: Option<i32>,
     pub power: Option<String>,
-    pub produced_mana: Option<Vec<CardColor>>,
+    pub produced_mana: Option<Vec<CardManaColor>>,
     pub reserved: bool,
     pub toughness: Option<String>,
-    pub type_line: String,
+    pub type_line: Option<String>,
     //Print fields
     pub artist: Option<String>,
     pub artist_ids: Option<Vec<String>>,
     pub attraction_lights: Option<Vec<i8>>,
     pub booster: bool,
     pub border_color: CardBorderColor,
-    pub card_back_id: String,
+    pub card_back_id: Option<String>,
     pub collector_number: String,
     pub content_warning: Option<bool>,
     pub digital: bool,
@@ -62,33 +63,113 @@ pub struct Card {
     pub flavor_name: Option<String>,
     pub flavor_text: Option<String>,
     pub frame_effects: Option<Vec<CardFrameEffect>>,
-    //TODO FRAMES +
-    //https://scryfall.com/docs/api/cards
+    pub frame:CardFrame,
+    pub full_art:bool,
+    pub games:Vec<CardGameTypes>,
+    pub highres_image:bool,
+    pub illustration_id:Option<String>,
+    pub image_status:CardImageStatus,
+    pub image_uris:Option<CardImageURIs>,
+    pub oversized:bool,
+    pub prices:CardPrices,
+    pub printed_name:Option<String>,
+    pub printed_text:Option<String>,
+    pub printed_type_line:Option<String>,
+    pub promo:bool,
+    pub promo_types:Option<Vec<String>>,
+    pub purchase_uris:Option<CardPurchaseURIs>,
+    pub rarity:CardRarity,
+    pub related_uris:CardRelatedURIs,
+    pub released_at:NaiveDate,
+    pub reprint:bool,
+    pub scryfall_set_uri:String,
+    pub set_name:String,
+    pub set_search_uri:String,
+    pub set_type:String,
+    pub set_uri:String,
+    pub set:String,
+    pub set_id:String,
+    pub story_spotlight:bool,
+    pub textless:bool,
+    pub variation:bool,
+    pub variation_of:Option<String>,
+    pub security_stamp:Option<CardSecurityStamp>,
+    pub watermark:Option<String>,
+    pub preview:Option<CardPreview>
+}
+
+#[derive(Deserialize)]
+#[allow(unused)]
+pub struct CardPreview {
+    pub previewed_at:NaiveDate,
+    pub source_uri:Option<String>,
+    pub source:Option<String>
+}
+
+#[derive(Deserialize)]
+#[allow(unused)]
+pub struct CardRelatedURIs {
+    gatherer:Option<String>,
+    tcgplayer_infinite_articles:Option<String>,
+    tcgplayer_infinite_decks:Option<String>,
+    edhrec:Option<String>,
+}
+
+#[derive(Deserialize)]
+#[allow(unused)]
+pub struct CardPurchaseURIs {
+    tcgplayer:Option<String>,
+    cardmarket:Option<String>,
+    cardhoarder:Option<String>,
+
 }
 #[derive(Deserialize)]
 #[allow(unused)]
+pub struct CardPrices {
+    usd:Option<String>,
+    usd_foil:Option<String>,
+    usd_etched:Option<String>,
+    eur:Option<String>,
+    eur_foil:Option<String>,
+    eur_etched:Option<String>,
+    tix:Option<String>
+}
+
+#[derive(Deserialize)]
+#[allow(unused)]
+pub struct CardImageURIs {
+    small:Option<String>,
+    normal:Option<String>,
+    large:Option<String>,
+    art_crop:Option<String>,
+    border_crop:Option<String>,
+    png:Option<String>
+}
+
+#[derive(Deserialize)]
+#[allow(unused)]
 pub struct CardLegalities {
-    pub standard: LegalityState,
-    pub future: LegalityState,
-    pub historic: LegalityState,
-    pub timeless: LegalityState,
-    pub gladiator: LegalityState,
-    pub pioneer: LegalityState,
-    pub modern: LegalityState,
-    pub legacy: LegalityState,
-    pub pauper: LegalityState,
-    pub vintage: LegalityState,
-    pub penny: LegalityState,
-    pub commander: LegalityState,
-    pub oathbreaker: LegalityState,
-    pub standardbrawl: LegalityState,
-    pub brawl: LegalityState,
-    pub alchemy: LegalityState,
-    pub paupercommander: LegalityState,
-    pub duel: LegalityState,
-    pub oldschool: LegalityState,
-    pub premodern: LegalityState,
-    pub predh: LegalityState,
+    pub standard: CardLegalityState,
+    pub future: CardLegalityState,
+    pub historic: CardLegalityState,
+    pub timeless: CardLegalityState,
+    pub gladiator: CardLegalityState,
+    pub pioneer: CardLegalityState,
+    pub modern: CardLegalityState,
+    pub legacy: CardLegalityState,
+    pub pauper: CardLegalityState,
+    pub vintage: CardLegalityState,
+    pub penny: CardLegalityState,
+    pub commander: CardLegalityState,
+    pub oathbreaker: CardLegalityState,
+    pub standardbrawl: CardLegalityState,
+    pub brawl: CardLegalityState,
+    pub alchemy: CardLegalityState,
+    pub paupercommander: CardLegalityState,
+    pub duel: CardLegalityState,
+    pub oldschool: CardLegalityState,
+    pub premodern: CardLegalityState,
+    pub predh: CardLegalityState,
 }
 
 #[derive(Deserialize)]
@@ -102,7 +183,7 @@ pub struct CardFace {
     pub defense: Option<String>,
     pub flavor_text: Option<String>,
     pub illustration_id: Option<String>,
-    pub image_uris: Option<String>,
+    pub image_uris: Option<CardImageURIs>,
     pub layout: Option<CardLayout>,
     pub mana_cost: String,
     pub name: String,
@@ -127,6 +208,151 @@ pub struct RelatedObject {
     pub name: String,
     pub type_line: String,
     pub uri: String,
+}
+
+pub enum CardManaColor {
+    W,
+    U,
+    B,
+    R,
+    G,
+    C,
+    T, //Unfinity tapmana
+}
+impl <'de> Deserialize<'de> for CardManaColor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        let mana_color = String::deserialize(deserializer)?;
+        match mana_color.as_str() {
+            "W" => Ok(Self::W),
+            "U" => Ok(Self::U),
+            "B" => Ok(Self::B),
+            "R" => Ok(Self::R),
+            "G" => Ok(Self::G),
+            "C" => Ok(Self::C),
+            "T" => Ok(Self::T),
+            other => Err(serde::de::Error::invalid_value(Unexpected::Str(other), &"a mana color"))
+        }
+    }
+}
+
+pub enum CardSecurityStamp {
+    Oval,
+    Triangle,
+    Acorn,
+    Circle,
+    Arena,
+    Heart
+}
+impl<'de> Deserialize<'de> for CardSecurityStamp {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        let security_stamp = String::deserialize(deserializer)?;
+        match security_stamp.as_str() {
+            "oval" => Ok(Self::Oval),
+            "triangle" => Ok(Self::Triangle),
+            "acorn" => Ok(Self::Acorn),
+            "circle" => Ok(Self::Circle),
+            "arena" => Ok(Self::Arena),
+            "heart" => Ok(Self::Heart),
+            other => Err(serde::de::Error::invalid_value(Unexpected::Str(other), &"any valid stamp shape"))
+        }
+    }
+}
+
+pub enum CardRarity {
+    Common,
+    Uncommon,
+    Rare,
+    Special,
+    Mythic,
+    Bonus
+}
+impl<'de> Deserialize<'de> for CardRarity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        let card_rarity = String::deserialize(deserializer)?;
+        match card_rarity.as_str() {
+            "common" => Ok(Self::Common),
+            "uncommon" => Ok(Self::Uncommon),
+            "rare" => Ok(Self::Rare),
+            "special" => Ok(Self::Special),
+            "mythic" => Ok(Self::Mythic),
+            "bonus" => Ok(Self::Bonus),
+            other => Err(serde::de::Error::invalid_value(Unexpected::Str(other), &"common, uncommon, rare, special, mythic, or bonus"))
+        }
+    }
+}
+
+pub enum CardImageStatus {
+    Missing,
+    Placeholder,
+    Lowres,
+    HighresScan
+}
+impl<'de> Deserialize<'de> for CardImageStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        let image_status = String::deserialize(deserializer)?;
+        match image_status.as_str() {
+            "missing" => Ok(Self::Missing),
+            "placeholder" => Ok(Self::Placeholder),
+            "lowres" => Ok(Self::Lowres),
+            "highres_scan" => Ok(Self::HighresScan),
+            other => Err(serde::de::Error::invalid_value(Unexpected::Str(other), &"missing, placeholder, lowres, or highres_scan"))
+        }
+    }
+}
+
+pub enum CardGameTypes {
+    Paper,
+    Arena,
+    Mtgo,
+    //ones i had to manually add becuase they don't follow the docs
+    Shandalar,
+    SegaDreamcast,//WHAT THE FUCK
+}
+impl<'de> Deserialize<'de> for CardGameTypes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        let game_name = String::deserialize(deserializer)?;
+        match game_name.as_str() {
+            "paper" => Ok(Self::Paper),
+            "arena" => Ok(Self::Arena),
+            "mtgo" => Ok(Self::Mtgo),
+            "sega" => Ok(Self::SegaDreamcast),
+            "astral" => Ok(Self::Shandalar),
+            other => Err(serde::de::Error::invalid_value(Unexpected::Str(other), &"the name of a mtg game"))
+        }
+    }
+}
+
+pub enum CardFrame {
+    LimitedEditionAlpha,
+    Mirage,
+    Modern,
+    M15,
+    Future
+}
+impl<'de> Deserialize<'de> for CardFrame {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de> {
+        let frame_name = String::deserialize(deserializer)?;
+        match frame_name.as_str() {
+            "1993" => Ok(Self::LimitedEditionAlpha),
+            "1997" => Ok(Self::Mirage),
+            "2003" => Ok(Self::Modern),
+            "2015" => Ok(Self::M15),
+            "future" => Ok(Self::Future),
+            other => Err(serde::de::Error::invalid_value(Unexpected::Str(other), &"1993, 1997, 2003, 2015, or future"))
+        }
+    }
 }
 
 pub enum CardFrameEffect {
@@ -154,6 +380,8 @@ pub enum CardFrameEffect {
     FanDFC,
     UpsideDownDFC,
     Spree,
+    FullArt,
+    BoosterFun,
 }
 impl<'de> Deserialize<'de> for CardFrameEffect {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -186,6 +414,9 @@ impl<'de> Deserialize<'de> for CardFrameEffect {
             "fandfc" => Ok(Self::FanDFC),
             "upsidedowndfc" => Ok(Self::UpsideDownDFC),
             "spree" => Ok(Self::Spree),
+            //ones i had to manually add bc they don't follow the docs
+            "fullart" => Ok(Self::FullArt),
+            "boosterfun" => Ok(Self::BoosterFun),
             other => Err(serde::de::Error::invalid_value(Unexpected::Str(other), &"any valid frame effect name"))
         }
     }
@@ -242,13 +473,13 @@ impl<'de> Deserialize<'de> for CardBorderColor {
         }
     }
 }
-pub enum LegalityState {
+pub enum CardLegalityState {
     Legal,
     NotLegal,
     Banned,
     Restricted,
 }
-impl<'de> Deserialize<'de> for LegalityState {
+impl<'de> Deserialize<'de> for CardLegalityState {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -273,6 +504,7 @@ pub enum CardColor {
     B,
     R,
     G,
+    C,
 }
 impl<'de> Deserialize<'de> for CardColor {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -286,6 +518,7 @@ impl<'de> Deserialize<'de> for CardColor {
             "B" => Ok(Self::B),
             "R" => Ok(Self::R),
             "G" => Ok(Self::G),
+            "C" => Ok(Self::C),
             other => Err(serde::de::Error::invalid_value(
                 Unexpected::Str(other),
                 &"W, U, B, R, or G",

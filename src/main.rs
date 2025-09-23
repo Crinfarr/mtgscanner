@@ -1,12 +1,13 @@
 mod card;
-use std::{fs::File, io::Write, path::Path, time::Instant};
+use std::{any::Any, fs::File, io::Write, path::Path, time::Instant};
 
 use reqwest::{
-    Client, Error,
+    Client,
     header::{ACCEPT, CONTENT_LENGTH},
 };
 use serde::Deserialize;
 use serde_with::chrono::{self, DateTime};
+use tokio::runtime::Runtime;
 use tracing::{Level, event, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, util::SubscriberInitExt};
 
@@ -34,8 +35,37 @@ struct BulkResponse {
     data: Vec<BulkEntry>,
 }
 
+#[derive(Debug)]
+#[allow(unused)]
+enum RuntimeError {
+    ReqwestError(reqwest::Error),
+    IOError(std::io::Error),
+    TextDecodeError(std::string::FromUtf8Error),
+    JSONDecodeError(serde_json::Error),
+}
+impl From<reqwest::Error> for RuntimeError {
+    fn from(err: reqwest::Error) -> RuntimeError {
+        RuntimeError::ReqwestError(err)
+    }
+}
+impl From<std::io::Error> for RuntimeError {
+    fn from(err: std::io::Error) -> RuntimeError {
+        RuntimeError::IOError(err)
+    }
+}
+impl From<std::string::FromUtf8Error> for RuntimeError {
+    fn from(err: std::string::FromUtf8Error) -> RuntimeError {
+        RuntimeError::TextDecodeError(err)
+    }
+}
+impl From<serde_json::Error> for RuntimeError {
+    fn from(err: serde_json::Error) -> RuntimeError {
+        RuntimeError::JSONDecodeError(err)
+    }
+}
+
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<(), RuntimeError> {
     tracing_subscriber::FmtSubscriber::new()
         .with(LevelFilter::from_level(Level::DEBUG))
         .init();
@@ -55,7 +85,7 @@ async fn main() -> Result<(), Error> {
             .json::<BulkResponse>()
             .await?;
         event!(Level::INFO, "Downloading bulk data");
-        let st = Instant::now();
+        let mut st = Instant::now();
         let mut download_stream = client
             .get(
                 response
@@ -87,19 +117,31 @@ async fn main() -> Result<(), Error> {
             );
             f_handle.write(&chunk).expect("Failed to write file");
         }
+        let mut elapsed = Instant::now().duration_since(st);
         event!(
             Level::INFO,
             "Downloaded {} bytes in {}.{} seconds",
             c_length,
-            Instant::now().duration_since(st).as_secs(),
-            Instant::now().duration_since(st).subsec_millis()
+            elapsed.as_secs(),
+            elapsed.subsec_millis()
         );
     }
-    let cards = serde_json::from_str::<Vec<card::Card>>(
-        str::from_utf8(&std::fs::read("./unique_artworks.json").unwrap_or(vec![b'[', b']']))
-            .unwrap_or("[]"),
-    ).unwrap_or(vec![]);
+    let mut st = Instant::now();
+    let content = String::from_utf8(std::fs::read("./unique_artwork.json")?)?;
+    let cards = serde_json::from_str::<Vec<card::Card>>(&content)?;
+    let mut elapsed = Instant::now().duration_since(st);
+    event!(
+        Level::INFO,
+        "Parsed {} cards in {}.{}s",
+        content.lines().count() - 2,
+        elapsed.as_secs(),
+        elapsed.subsec_millis()
+    );
+    st = Instant::now();
     for card in cards {
+        print!("{}               \r", card.collector_number)
     }
+    elapsed = Instant::now().duration_since(st);
+    event!(Level::INFO, "Took {}.{} secs to loop through", elapsed.as_secs(), elapsed.subsec_millis());
     Ok(())
 }
