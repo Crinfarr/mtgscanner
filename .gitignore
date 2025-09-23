@@ -130,3 +130,4 @@ carddata.tsv
 # Added by cargo
 
 /target
+unique_artwork.json
