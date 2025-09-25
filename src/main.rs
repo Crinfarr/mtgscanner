@@ -1,15 +1,17 @@
 mod card;
-use std::{any::Any, fs::File, io::Write, path::Path, time::Instant};
+use std::{collections::VecDeque, error::Error, io::Write, path::Path, time::Instant};
+use tracing::{Instrument, instrument, span};
 
 use reqwest::{
-    Client,
+    Client, StatusCode,
     header::{ACCEPT, CONTENT_LENGTH},
 };
 use serde::Deserialize;
 use serde_with::chrono::{self, DateTime};
-use tokio::runtime::Runtime;
 use tracing::{Level, event, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::card::{Card, CardImageStatus};
 
 #[derive(Deserialize)]
 #[allow(unused)]
@@ -64,18 +66,18 @@ impl From<serde_json::Error> for RuntimeError {
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), RuntimeError> {
     tracing_subscriber::FmtSubscriber::new()
         .with(LevelFilter::from_level(Level::DEBUG))
         .init();
-    event!(Level::INFO, "Fetching latest revision of scryfall data");
     let client = Client::builder()
         .user_agent("io.crinfarr.scanner-bot")
         .build()?;
-    if Path::new("./unique_artwork.json").exists() {
+    if Path::new("./all_cards.json").exists() {
         event!(Level::INFO, "Using local card data");
     } else {
+        // event!(Level::INFO, "Fetching latest revision of scryfall data");
         event!(Level::INFO, "Downloading bulk data index");
         let response = client
             .get("https://api.scryfall.com/bulk-data")
@@ -85,20 +87,20 @@ async fn main() -> Result<(), RuntimeError> {
             .json::<BulkResponse>()
             .await?;
         event!(Level::INFO, "Downloading bulk data");
-        let mut st = Instant::now();
+        let st = Instant::now();
         let mut download_stream = client
             .get(
                 response
                     .data
                     .iter()
-                    .find(|obj| obj.bulk_type == "unique_artwork")
+                    .find(|obj| obj.bulk_type == "all_cards")
                     .unwrap()
                     .download_uri
                     .clone(),
             )
             .send()
             .await?;
-        let mut f_handle = std::fs::File::create("./unique_artwork.json").unwrap();
+        let mut f_handle = std::fs::File::create("./all_cards.json").unwrap();
         let c_length = str::parse::<u32>(
             download_stream
                 .headers()
@@ -117,7 +119,7 @@ async fn main() -> Result<(), RuntimeError> {
             );
             f_handle.write(&chunk).expect("Failed to write file");
         }
-        let mut elapsed = Instant::now().duration_since(st);
+        let elapsed = Instant::now().duration_since(st);
         event!(
             Level::INFO,
             "Downloaded {} bytes in {}.{} seconds",
@@ -126,10 +128,12 @@ async fn main() -> Result<(), RuntimeError> {
             elapsed.subsec_millis()
         );
     }
-    let mut st = Instant::now();
-    let content = String::from_utf8(std::fs::read("./unique_artwork.json")?)?;
-    let cards = serde_json::from_str::<Vec<card::Card>>(&content)?;
-    let mut elapsed = Instant::now().duration_since(st);
+    let st = Instant::now();
+    event!(Level::INFO, "Loading file...");
+    let content = String::from_utf8(std::fs::read("./all_cards.json")?)?;
+    event!(Level::INFO, "Parsing...");
+    let mut cards = Box::pin(serde_json::from_str::<VecDeque<card::Card>>(&content)?);
+    let elapsed = Instant::now().duration_since(st);
     event!(
         Level::INFO,
         "Parsed {} cards in {}.{}s",
@@ -137,11 +141,33 @@ async fn main() -> Result<(), RuntimeError> {
         elapsed.as_secs(),
         elapsed.subsec_millis()
     );
-    st = Instant::now();
-    for card in cards {
-        print!("{}               \r", card.collector_number)
+    // let shared_client = reqwest::Client::default();
+    while let Some(card) = cards.pop_front() {
+        tokio::task::spawn(async |card:Card| -> () {
+            if card.image_status != CardImageStatus::HighresScan{
+                return;
+            } else {
+                if let Some(imgs) = card.image_uris {
+                    if let Some(fullsize_img) = imgs.large {
+                        event!(Level::DEBUG, "Downloading image for {}/{}", card.set, card.collector_number);
+                        let res = reqwest::get(fullsize_img).await;
+                        if let Ok(_response) = res {
+                            event!(Level::INFO, "Downloaded {}/{}", card.set, card.collector_number);
+                            return;
+                        }
+                        if let Err(e) = res {
+                            event!(Level::ERROR, "Error when downloading {}/{}: [{:?}]: {}", card.set, card.collector_number,e.source().unwrap(), e);
+                            return;
+                        }
+                    } else {
+                        event!(Level::WARN, "Card {}/{} claims highres-scan, but fullsize image is not available", card.set, card.collector_number)
+                    }
+                } else {
+                    event!(Level::WARN, "Card {}/{} claims highres-scan, but no images are available", card.set, card.collector_number);
+                    return;
+                }
+            }
+        }(card).instrument(span!(Level::INFO, "CardDownloader")));
     }
-    elapsed = Instant::now().duration_since(st);
-    event!(Level::INFO, "Took {}.{} secs to loop through", elapsed.as_secs(), elapsed.subsec_millis());
     Ok(())
 }

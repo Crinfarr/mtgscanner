@@ -1,9 +1,6 @@
-use std::f32::consts::PI;
 
 use serde::{Deserialize, de::Unexpected};
-use serde_with::chrono::{self, Date, DateTime, NaiveDate, TimeZone};
-
-use crate::card;
+use serde_with::chrono::NaiveDate;
 
 #[derive(Deserialize)]
 #[allow(unused)]
@@ -138,12 +135,12 @@ pub struct CardPrices {
 #[derive(Deserialize)]
 #[allow(unused)]
 pub struct CardImageURIs {
-    small:Option<String>,
-    normal:Option<String>,
-    large:Option<String>,
-    art_crop:Option<String>,
-    border_crop:Option<String>,
-    png:Option<String>
+    pub small:Option<String>,
+    pub normal:Option<String>,
+    pub large:Option<String>,
+    pub art_crop:Option<String>,
+    pub border_crop:Option<String>,
+    pub png:Option<String>
 }
 
 #[derive(Deserialize)]
@@ -287,6 +284,7 @@ impl<'de> Deserialize<'de> for CardRarity {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub enum CardImageStatus {
     Missing,
     Placeholder,
