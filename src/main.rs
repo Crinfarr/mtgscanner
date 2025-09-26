@@ -1,9 +1,17 @@
 mod card;
-use std::{collections::VecDeque, error::Error, io::Write, path::Path, time::Instant};
-use tracing::{Instrument, instrument, span};
+use std::{
+    error::Error,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+    path::Path,
+    sync::Arc,
+    time::Instant,
+};
+use tokio::{sync::Semaphore, task::JoinSet};
+use tracing::{Instrument, span};
 
 use reqwest::{
-    Client, StatusCode,
+    Client,
     header::{ACCEPT, CONTENT_LENGTH},
 };
 use serde::Deserialize;
@@ -68,12 +76,15 @@ impl From<serde_json::Error> for RuntimeError {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), RuntimeError> {
-    tracing_subscriber::FmtSubscriber::new()
-        .with(LevelFilter::from_level(Level::DEBUG))
+    tracing_subscriber::fmt()
+        .with_max_level(Level::WARN)
         .init();
-    let client = Client::builder()
-        .user_agent("io.crinfarr.scanner-bot")
-        .build()?;
+    let client = Arc::from(
+        Client::builder()
+            .user_agent("io.crinfarr.scanner-bot")
+            .build()?,
+    );
+
     if Path::new("./all_cards.json").exists() {
         event!(Level::INFO, "Using local card data");
     } else {
@@ -100,7 +111,7 @@ async fn main() -> Result<(), RuntimeError> {
             )
             .send()
             .await?;
-        let mut f_handle = std::fs::File::create("./all_cards.json").unwrap();
+        let mut f_handle = File::create("./all_cards.json").unwrap();
         let c_length = str::parse::<u32>(
             download_stream
                 .headers()
@@ -129,45 +140,123 @@ async fn main() -> Result<(), RuntimeError> {
         );
     }
     let st = Instant::now();
-    event!(Level::INFO, "Loading file...");
-    let content = String::from_utf8(std::fs::read("./all_cards.json")?)?;
-    event!(Level::INFO, "Parsing...");
-    let mut cards = Box::pin(serde_json::from_str::<VecDeque<card::Card>>(&content)?);
+
+    let mut join_set: JoinSet<()> = JoinSet::default();
+
+    let f_reader = std::fs::File::open("./all_cards.json")?;
+    event!(Level::DEBUG, "Trying to lock card file");
+    f_reader.lock()?;
+    event!(Level::DEBUG, "File locked");
+    let r_buf = BufReader::new(f_reader);
+
+    let sem_parallel_dls = Arc::new(Semaphore::new(500));
+    let mut threadnum = 0;
+    for maybe_line in r_buf.lines() {
+        threadnum += 1;
+        let line = maybe_line?;
+        if line == "[" || line == "]" {
+            continue;
+        }
+        let sem_ref = sem_parallel_dls.clone();
+        let client_ref = client.clone();
+        let card = serde_json::from_str::<Card>(&line[0..line.len() - 1])
+            .or_else(|_| serde_json::from_str::<Card>(&line))?;
+        event!(Level::DEBUG, "Starting thread for {}", card.name);
+        join_set.spawn(
+            async move {
+                event!(Level::TRACE, "Waiting on permit");
+                let _permit = sem_ref.acquire().await.unwrap();
+                event!(Level::TRACE, "Permit captured");
+                match card.image_status {
+                    CardImageStatus::HighresScan => {
+                        event!(Level::TRACE, "Highres scan available");
+                        match card.image_uris {
+                            Some(uris) => {
+                                if let Some(uri) = uris.large {
+                                    event!(Level::DEBUG, "Fetching image");
+                                    match client_ref.get(uri).send().await {
+                                        Ok(_) => event!(Level::INFO, "Download complete"),
+                                        Err(e) => event!(
+                                            Level::WARN,
+                                            "Error downloading: {} ({:?})",
+                                            e,
+                                            e.source()
+                                        ),
+                                    };
+                                    return;
+                                } else {
+                                    event!(
+                                        Level::WARN,
+                                        "Card claimed highres but no large image available"
+                                    );
+                                }
+                            }
+                            None => match card.card_faces {
+                                Some(faces) => {
+                                    let mut face_num = 0;
+                                    for face in faces {
+                                        face_num += 1;
+                                        if let Some(uris) = face.image_uris {
+                                            if let Some(uri) = uris.large {
+                                                event!(Level::DEBUG, "Fetching image");
+                                                match client_ref.get(uri).send().await {
+                                                    Ok(_) => {
+                                                        event!(Level::INFO, "Download complete")
+                                                    }
+                                                    Err(e) => event!(
+                                                        Level::WARN,
+                                                        "Error downloading: {} ({:?})",
+                                                        e,
+                                                        e.source()
+                                                    ),
+                                                };
+                                            }
+                                        } else {
+                                            event!(
+                                                Level::WARN,
+                                                "Claimed highres but face {} had no images",
+                                                face_num
+                                            );
+                                            return;
+                                        }
+                                    }
+                                }
+                                None => {
+                                    event!(
+                                        Level::WARN,
+                                        "Card claimed highres but no faces were available"
+                                    );
+                                }
+                            },
+                        }
+                    }
+                    quality => {
+                        event!(
+                            Level::DEBUG,
+                            "{}/{}: No highres scan available, max quality {:?}",
+                            card.set,
+                            card.collector_number,
+                            quality
+                        );
+                        return;
+                    }
+                }
+            }
+            .instrument(span!(
+                Level::INFO,
+                "downloader thread",
+                cardname = card.name,
+                thread_id = threadnum
+            )),
+        );
+    }
+    join_set.join_all().await;
     let elapsed = Instant::now().duration_since(st);
     event!(
         Level::INFO,
-        "Parsed {} cards in {}.{}s",
-        content.lines().count() - 2,
+        "Loaded all cards in {}.{} seconds",
         elapsed.as_secs(),
         elapsed.subsec_millis()
     );
-    // let shared_client = reqwest::Client::default();
-    while let Some(card) = cards.pop_front() {
-        tokio::task::spawn(async |card:Card| -> () {
-            if card.image_status != CardImageStatus::HighresScan{
-                return;
-            } else {
-                if let Some(imgs) = card.image_uris {
-                    if let Some(fullsize_img) = imgs.large {
-                        event!(Level::DEBUG, "Downloading image for {}/{}", card.set, card.collector_number);
-                        let res = reqwest::get(fullsize_img).await;
-                        if let Ok(_response) = res {
-                            event!(Level::INFO, "Downloaded {}/{}", card.set, card.collector_number);
-                            return;
-                        }
-                        if let Err(e) = res {
-                            event!(Level::ERROR, "Error when downloading {}/{}: [{:?}]: {}", card.set, card.collector_number,e.source().unwrap(), e);
-                            return;
-                        }
-                    } else {
-                        event!(Level::WARN, "Card {}/{} claims highres-scan, but fullsize image is not available", card.set, card.collector_number)
-                    }
-                } else {
-                    event!(Level::WARN, "Card {}/{} claims highres-scan, but no images are available", card.set, card.collector_number);
-                    return;
-                }
-            }
-        }(card).instrument(span!(Level::INFO, "CardDownloader")));
-    }
     Ok(())
 }

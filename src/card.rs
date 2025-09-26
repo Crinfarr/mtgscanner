@@ -284,7 +284,7 @@ impl<'de> Deserialize<'de> for CardRarity {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum CardImageStatus {
     Missing,
     Placeholder,
