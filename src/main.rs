@@ -1,13 +1,11 @@
 mod card;
+use image::DynamicImage;
+use image_hasher::ImageHash;
 use std::{
-    error::Error,
-    fs::File,
-    io::{BufRead, BufReader, Write},
-    path::Path,
-    sync::Arc,
-    time::Instant,
+    collections::BTreeSet, error::Error, fs::File, io::{BufRead, BufReader, Write}, path::Path, sync::Arc, time::Instant
 };
 use tokio::{sync::Semaphore, task::JoinSet};
+use tokio_util::bytes::Bytes;
 use tracing::{Instrument, span};
 
 use reqwest::{
@@ -16,8 +14,7 @@ use reqwest::{
 };
 use serde::Deserialize;
 use serde_with::chrono::{self, DateTime};
-use tracing::{Level, event, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::{Level, event};
 
 use crate::card::{Card, CardImageStatus};
 
@@ -74,18 +71,26 @@ impl From<serde_json::Error> for RuntimeError {
     }
 }
 
+const TARGET_BULK_TYPE: &'static str = "all_cards";
+const LOG_LEVEL: Level = Level::DEBUG;
+const MAX_DOWNLOAD_THREADS: u16 = 200;
+const MAX_HASH_THREADS: u16 = 1000;
+
+struct ImgRecord {
+    ihash:ImageHash,
+    cardrep:Card
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), RuntimeError> {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::WARN)
-        .init();
+    tracing_subscriber::fmt().with_max_level(LOG_LEVEL).init();
     let client = Arc::from(
         Client::builder()
             .user_agent("io.crinfarr.scanner-bot")
             .build()?,
     );
 
-    if Path::new("./all_cards.json").exists() {
+    if Path::new(&format!("./{TARGET_BULK_TYPE}.json")).exists() {
         event!(Level::INFO, "Using local card data");
     } else {
         // event!(Level::INFO, "Fetching latest revision of scryfall data");
@@ -104,14 +109,14 @@ async fn main() -> Result<(), RuntimeError> {
                 response
                     .data
                     .iter()
-                    .find(|obj| obj.bulk_type == "all_cards")
+                    .find(|obj| obj.bulk_type == TARGET_BULK_TYPE)
                     .unwrap()
                     .download_uri
                     .clone(),
             )
             .send()
             .await?;
-        let mut f_handle = File::create("./all_cards.json").unwrap();
+        let mut f_handle = File::create(format!("./{TARGET_BULK_TYPE}.json")).unwrap();
         let c_length = str::parse::<u32>(
             download_stream
                 .headers()
@@ -143,13 +148,14 @@ async fn main() -> Result<(), RuntimeError> {
 
     let mut join_set: JoinSet<()> = JoinSet::default();
 
-    let f_reader = std::fs::File::open("./all_cards.json")?;
+    let f_reader = std::fs::File::open(format!("./{TARGET_BULK_TYPE}.json"))?;
     event!(Level::DEBUG, "Trying to lock card file");
     f_reader.lock()?;
     event!(Level::DEBUG, "File locked");
     let r_buf = BufReader::new(f_reader);
 
-    let sem_parallel_dls = Arc::new(Semaphore::new(500));
+    let sem_parallel_dls = Arc::new(Semaphore::new(MAX_DOWNLOAD_THREADS as usize));
+    let sem_parallel_hashes = Arc::new(Semaphore::new(MAX_HASH_THREADS as usize));
     let mut threadnum = 0;
     for maybe_line in r_buf.lines() {
         threadnum += 1;
@@ -157,16 +163,22 @@ async fn main() -> Result<(), RuntimeError> {
         if line == "[" || line == "]" {
             continue;
         }
-        let sem_ref = sem_parallel_dls.clone();
+        let sem_load_ref = sem_parallel_dls.clone();
+        let sem_hash_ref = sem_parallel_hashes.clone();
         let client_ref = client.clone();
         let card = serde_json::from_str::<Card>(&line[0..line.len() - 1])
             .or_else(|_| serde_json::from_str::<Card>(&line))?;
         event!(Level::DEBUG, "Starting thread for {}", card.name);
         join_set.spawn(
             async move {
+                let hasher = image_hasher::HasherConfig::new()
+                    .hash_alg(image_hasher::HashAlg::DoubleGradient)
+                    .hash_size(16, 16)
+                    .to_hasher();
                 event!(Level::TRACE, "Waiting on permit");
-                let _permit = sem_ref.acquire().await.unwrap();
+                let permit = sem_load_ref.acquire().await.unwrap();
                 event!(Level::TRACE, "Permit captured");
+                let mut imgs:BTreeSet<ImgRecord> = BTreeSet::new();
                 match card.image_status {
                     CardImageStatus::HighresScan => {
                         event!(Level::TRACE, "Highres scan available");
@@ -175,7 +187,25 @@ async fn main() -> Result<(), RuntimeError> {
                                 if let Some(uri) = uris.large {
                                     event!(Level::DEBUG, "Fetching image");
                                     match client_ref.get(uri).send().await {
-                                        Ok(_) => event!(Level::INFO, "Download complete"),
+                                        Ok(res) => {
+                                            event!(Level::INFO, "Download complete");
+                                            event!(Level::DEBUG, "Loading image");
+                                            let img_bytes = res.bytes().await.unwrap();
+                                            drop(permit);
+                                            match image::load_from_memory(&img_bytes) {
+                                                Ok(img) => {
+                                                    let _permit = sem_hash_ref.acquire().await.unwrap();
+                                                    event!(Level::DEBUG, "Loaded image");
+                                                    let hash = hasher.hash_image(&img);
+                                                    imgs.insert(ImgRecord {cardrep: card, ihash: hash});
+
+                                                },
+                                                Err(e) => {
+                                                    event!(Level::WARN, "Failed to load image, err {e}");
+                                                    return;
+                                                }
+                                            }
+                                        }
                                         Err(e) => event!(
                                             Level::WARN,
                                             "Error downloading: {} ({:?})",
@@ -183,7 +213,6 @@ async fn main() -> Result<(), RuntimeError> {
                                             e.source()
                                         ),
                                     };
-                                    return;
                                 } else {
                                     event!(
                                         Level::WARN,
@@ -217,7 +246,6 @@ async fn main() -> Result<(), RuntimeError> {
                                                 "Claimed highres but face {} had no images",
                                                 face_num
                                             );
-                                            return;
                                         }
                                     }
                                 }
@@ -241,6 +269,8 @@ async fn main() -> Result<(), RuntimeError> {
                         return;
                     }
                 }
+                drop(permit);
+                let _permit = sem_hash_ref.acquire().await.unwrap();
             }
             .instrument(span!(
                 Level::INFO,
